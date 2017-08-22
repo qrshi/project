@@ -1,0 +1,108 @@
+#include <iostm8S207c8.h>
+#include "UART3.H"
+#include "Timer4.H"
+
+
+#define RX_BUFF_LEN   1600
+
+volatile unsigned char RX_Buff[RX_BUFF_LEN];
+volatile unsigned short RX_buff_pointer_in;
+volatile unsigned short RX_buff_pointer_out;
+volatile unsigned short RX_buff_Count;
+
+//****************************************
+//UART1初始化
+//****************************************
+void UART3_Init(unsigned char Fmaster,unsigned long Baud)
+{  
+   unsigned long BaudDVI;
+   unsigned char BaudTemp;
+  
+   PD_DDR_DDR5 = 1;
+   PD_CR1_C15 = 1;
+   PD_CR2_C25 = 1; 
+   PD_ODR_ODR5 = 1;
+   
+   PD_DDR_DDR6 = 0;
+   PD_CR1_C16 = 1;
+   PD_CR2_C26 = 0;
+   
+ //  CLK_PCKENR1 |= 0x08;//开UART3时钟
+   
+   BaudDVI = (unsigned long)(Fmaster*1000000)/Baud;
+   BaudTemp = (unsigned char)(BaudDVI>>4);
+   UART3_BRR1 = BaudTemp;
+   BaudTemp = (BaudDVI>>8)&0x00f0;
+   BaudTemp |= BaudDVI&0x0f;
+   UART3_BRR2 = BaudTemp;  /*波特率*/
+
+   UART3_CR1 = 0x00;   //8位数据,无校验
+   UART3_CR2 = 0x2C;   /*充许接收中断，发送,接收使能*/
+ //  UART3_CR3 = 0x20;   /*2个停止位*/  
+    UART3_CR3 = 0x00;   /*2个停止位*/  
+   UART3_SR = 0;
+   
+   RX_buff_pointer_in = 0;  
+   RX_buff_pointer_out = 0;
+   RX_buff_Count = 0;
+}
+
+//*****************************************
+//发送一个字节
+//*****************************************
+void UART3_SendByte(unsigned char Byte)
+{
+   UART3_CR2_RIEN = 0;
+   UART3_CR2_REN = 0;
+   while((UART3_SR&0x80)==0);//发送数据寄存器是否为空
+   UART3_DR = Byte;
+  // UART1_DR = Byte;
+   while((UART3_SR&0x40)==0);//发送数据寄存器是否发完
+   UART3_CR2_RIEN = 1;
+   UART3_CR2_REN = 1;
+}
+//*****************************************
+//发送一串数据
+//*****************************************
+void UART3_SendStr(unsigned char *Str,unsigned char Len)
+{
+   UART3_CR2_RIEN = 0;
+   UART3_CR2_REN = 0;
+   
+   while(Len--)
+   {
+       while((UART3_SR&0x80)==0);//发送数据寄存器是否为空
+       UART3_DR = *Str++;
+   }
+   UART3_CR2_RIEN = 1;
+   UART3_CR2_REN = 1;
+}
+//*****************************************
+//UART1接收中断
+//*****************************************
+#pragma vector=UART3_R_RXNE_vector
+__interrupt void UART3_RX_RXNE(void)
+{
+    unsigned char Temp;
+    Temp = UART3_DR;
+    RX_Buff[RX_buff_pointer_in++] = Temp;
+    if(RX_buff_pointer_in==RX_BUFF_LEN) RX_buff_pointer_in = 0; //溢出就复盖最早的
+    if(++RX_buff_Count>RX_BUFF_LEN) RX_buff_Count = RX_BUFF_LEN;//数据个数不能多于储存深度 
+    
+    UART3_SR = 0;
+}
+//****************************************
+//从缓冲区取一个字节
+//****************************************
+unsigned char UART3_GetByte(unsigned char *datOut,unsigned int TimeOut100us)
+{
+    Count100us(CLEAR);
+    while(RX_buff_Count<1)
+    {
+        if(Count100us(READ)>TimeOut100us) return ERROR;
+    }
+    *datOut = RX_Buff[RX_buff_pointer_out++];
+    if(RX_buff_pointer_out==RX_BUFF_LEN) RX_buff_pointer_out = 0;
+    RX_buff_Count--;
+    return RIGHT;
+}
