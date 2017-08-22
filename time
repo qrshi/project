@@ -1,0 +1,51 @@
+#include <iostm8S207c8.h>
+#include "Timer4.H"
+
+
+
+volatile unsigned int Count100US;
+volatile unsigned int _Count100US;
+
+
+//****************************************
+//初始化TIM4
+//****************************************
+void TIM4_Init(void)
+{
+    CLK_PCKENR1 |= 0x10;//开TIM4时钟
+    TIM4_CR1_ARPE = 1;//TIM4_ARR寄存器通过缓冲预装载 
+    TIM4_CR1_OPM = 0;//计数器在更新事件时不停止
+
+    TIM4_PSCR = 3;//时钟8分频
+    TIM4_ARR = 199;//100US中断
+    TIM4_CNTR=199;   //计数寄存器
+    TIM4_SR_UIF = 0;//清中断标志 
+    TIM4_IER = 0x01;//更新中断使能
+    TIM4_CR1_CEN  = 1;//使能计数
+}
+//****************************************
+//TIM4中断函数   100US中断
+//****************************************
+#pragma vector = TIM4_OVR_UIF_vector
+__interrupt void TIM4_UPD_OVF_IRQHandler(void)
+{             
+    Count100US++;
+    _Count100US++;
+    
+    TIM4_SR_UIF = 0;//清中断标志
+}
+//*****************************************
+//100US延时
+//*****************************************
+void delay100us(unsigned int us)
+{
+   for(Count100US=0;Count100US<us;);
+}
+//****************************************
+//
+//****************************************
+unsigned int Count100us(unsigned char flag)
+{
+    if(flag == CLEAR)  _Count100US = 0;
+    return _Count100US;
+}
