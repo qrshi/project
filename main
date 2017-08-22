@@ -1,0 +1,95 @@
+#include <iostm8S207c8.h>
+#include<stdio.h>
+#include "Beep.h"
+#include "UART3.H"
+#include "Timer4.H"
+#include "LCD12232.h"
+#include "Flash.h"
+#include "Uboot.h"
+
+
+typedef  void (*iapfun)(void);				//定义一个函数类型的参数. 
+iapfun jump2app; 
+
+
+unsigned char Buff[128];
+
+
+__root const unsigned char reintvec0x8000[0x80]={0xFF,0xff};//中断向量表储存区
+
+
+//*******************************************
+//主函数
+//******************************************
+ 
+void main(void)
+{
+    unsigned char i;
+    
+    asm("sim");
+    
+    for(i=0;i<255;i++) asm("nop");
+    for(i=0;i<255;i++) asm("nop");
+    CLK_CKDIVR = 0;
+    
+    if(reintvec0x8000[0]!=0x82)//把Uboot的中断向量表保存起来
+    {
+        for(i=0;i<0x80;i++)
+        {
+           Buff[i] = *(__far unsigned char*)(0x8000+i);
+        }
+        Flash_Write_Bytes((unsigned long)reintvec0x8000,Buff,0x80);
+    }
+    
+    if((*(__far unsigned char*)CODE_FLAG=='C')&&(*(__far unsigned char*)(CODE_FLAG+1)=='O')
+       &&(*(__far unsigned char*)(CODE_FLAG+2)=='D')&&(*(__far unsigned char*)(CODE_FLAG+3)=='E'))//有应用程序就跳到应用程序执行
+    {
+        for(i=4;i<0x80;i++)
+        {
+           Buff[i] = *(__far unsigned char*)(0xb000+i);
+        }
+        for(i=4;i<0x80;i++)
+        {
+           if(Buff[i]!=ReadFlash_Byte(0x8000+i)) 
+           {
+              Flash_Write_Bytes(0x8004,Buff+4,0x80-4);
+              break;
+           }
+        }
+        
+        asm("LDW X,  SP ");
+        asm("LD  A,  $FF");
+        asm("LD  XL, A  ");
+        asm("LDW SP, X  ");
+        asm("JPF $B000");
+    }
+    else
+    {        
+        for(i=0;i<0x80;i++)
+        {
+           Buff[i] = reintvec0x8000[i];
+        }
+        for(i=0;i<0x80;i++)
+        {
+           if(Buff[i]!=ReadFlash_Byte(0x8000+i)) 
+           {
+              Flash_Write_Bytes(0x8000,Buff,0x80);
+              break;
+           }
+        }
+        
+        LcdIni();
+        Beep_Init();
+        TIM4_Init();
+        UART3_Init(16,19200);
+        clrscr();
+        DisplayArray(0,0,"Run BootLoader!",15); 
+        DisplayArray(0,1,"No Application!",15);
+        BeepOn(1);
+        asm("rim");//开总中断
+    }
+    while(1)
+    {      
+        BootLoad();
+    }
+}
