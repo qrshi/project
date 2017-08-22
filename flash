@@ -1,0 +1,243 @@
+#include <iostm8S207c8.h>
+#include "Flash.H"
+
+
+
+
+//******************************
+//EEPROM寄存器初始化
+//******************************
+
+void Eeprom_Init(void)            //在STM8S中还有一个互补寄存器NCR2
+{
+    volatile unsigned char Tmp;
+    FLASH_CR1 = 0x01;
+    FLASH_CR2 = 0x00;
+    FLASH_NCR2 = 0XFF;
+    Tmp = FLASH_IAPSR;            //FLASH_IAPSR读操作 清零
+    Eeprom_Unlock();
+    Flash_Unlock();
+}
+//******************************
+//EEPROM解锁
+//******************************
+void Eeprom_Unlock(void)
+{
+  FLASH_DUKR = FLASH_RASS_KEY2;  //写入密码2
+  FLASH_DUKR = FLASH_RASS_KEY1;  //密码1
+  while(FLASH_IAPSR_DUL == 0);   //等待解锁完成
+}
+//****************************************
+//读一字节
+//****************************************
+unsigned char ReadEeprom_Byte(unsigned int a)    
+{
+   return (*((unsigned char *)(a+EEPROM_ADDR_BASE )));
+}
+/***********************************************************
+* 函数：void STM8_EEPROM_Write_Word(void)
+* 说明：EEPROM写N字节函数
+* 参数：uint16 address----写入数据的起始地址的地址
+                uint8 *p----写入的数据指针
+                uint8 n-----写入的个数
+* 输出：无
+* 返回：无
+***********************************************************/
+
+void EEPROM_Write_Word(unsigned int DstAddr, unsigned char const *pSrc)
+{        
+      volatile unsigned char *pEE = (unsigned char *)(DstAddr)+EEPROM_ADDR_BASE;//获取EEPROM的绝对地址       
+      FLASH_CR2 = 0x40;         //使能写操作,4字节编程  
+      FLASH_NCR2 = ~0X40;
+       FLASH_DUKR = FLASH_RASS_KEY2;  //写入密码2
+       FLASH_DUKR = FLASH_RASS_KEY1;  //密码1
+       while(FLASH_IAPSR_DUL == 0);   //等待解锁完成
+       *pEE++ = *pSrc++;
+       *pEE++ = *pSrc++;
+       *pEE++ = *pSrc++; 
+       *pEE = *pSrc;      
+     while(FLASH_IAPSR_EOP == 0);     //等待编程结束
+}
+/***********************************************************
+* 函数：void STM8_EEPROM_Write_Block
+         (unsigned int DstAddr, unsigned char const  *pSrc)
+* 说明：EEPROM写4字节函数
+* 参数：uint16 address----写入数据的起始地址的地址
+                uint8 *p----写入的数据指针
+* 输出：无
+* 返回：无
+***********************************************************/
+__ramfunc void EEPROM_Write_Block(unsigned int DstAddr, unsigned char  *pSrc)
+{        
+       unsigned char *pEE;
+       unsigned char c;
+        
+       FLASH_CR1 =0x01;         //设置为标准编程时间
+       FLASH_CR2 = 0x01;        //使能写操作,block编程 
+       FLASH_NCR2 = 0XFE;
+       FLASH_DUKR = FLASH_RASS_KEY2;  //写入密码2
+       FLASH_DUKR = FLASH_RASS_KEY1;  //密码1
+       while(FLASH_IAPSR_DUL == 0);   //等待解锁完成
+  
+       pEE= (unsigned char *)(DstAddr)+EEPROM_ADDR_BASE;
+       
+       for(c=128; c; c--)
+        
+       *pEE++ = *pSrc++;          
+       while((FLASH_IAPSR_EOP) == 0);     //等待编程结束
+}
+//********************************************************
+//写任意长度,跨页写
+//********************************************************
+void EEPROM_Write_Bytes(unsigned int DstAddr, unsigned char  *Src,  unsigned short E2pNum)
+{
+  unsigned char c;
+  unsigned char *pBuf, *pEep;
+  unsigned char EepBuf[128];
+  unsigned char PageOffset;
+  unsigned int PageAddr;
+  unsigned char WrNum; 
+  
+  PageOffset = DstAddr&0x007f;
+  PageAddr = DstAddr&0xff80;
+  
+  do
+  {
+    if((E2pNum> 128)||(PageOffset + E2pNum  > 128))       //大于64字节一定是跨页操作，
+    {                                          //或者虽然小于页但是起始地址的过大导致页溢出也需要跨页操作 
+      WrNum = 128 - PageOffset;//计算当前页写入的字节数
+      E2pNum -= WrNum;           //减去当前的YAO写入的字节数=剩余未写入的字节数
+    }
+    else                                        //非跨页操作
+    {
+      WrNum = E2pNum;
+      E2pNum = 0;
+    }
+    pEep = (unsigned char *)(PageAddr);//获取当前EE页地址
+    pBuf = EepBuf; 
+    c= 128/4;
+    do                          //缓存EEPROM页数据
+    {
+      *pBuf++ = *pEep++;       //(减少循环次数，加快点速度) 
+      *pBuf++ = *pEep++;
+      *pBuf++ = *pEep++;
+      *pBuf++ = *pEep++;      
+    }while(--c);
+    pBuf =  EepBuf + PageOffset;//获取写入字节在缓冲区所在的绝对地址
+    do                          //待写数据填入 到 EEPROM 数据缓存区
+    {
+      *pBuf++ = *Src++;   
+    }while(--WrNum);
+    EEPROM_Write_Block(PageAddr,EepBuf);//将缓冲区的数据写到EEPROM中
+    
+    PageOffset = 0; //页偏移地址清零。（起始页偏移地址也只对第一次写有用，如果跨页那么偏移地址必定是0）
+    PageAddr += 128;//页地址需要递增。每一页为64个字节
+  
+  }while(E2pNum);
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//******************************
+//FLASH解锁
+//******************************
+__ramfunc void Flash_Unlock(void)
+{
+  FLASH_PUKR = FLASH_RASS_KEY1; 
+  FLASH_PUKR = FLASH_RASS_KEY2;
+  while(FLASH_IAPSR_PUL == 0); 
+}
+//****************************************
+//读falsh一字节
+//****************************************
+unsigned char ReadFlash_Byte(unsigned long int a)    
+{
+   return *(__far unsigned char *)a;
+}
+/***********************************************************
+* 函数：void STM8_EEPROM_Write_Block
+         (unsigned int DstAddr, unsigned char const  *pSrc)
+* 说明：EEPROM写4字节函数
+* 参数：uint16 address----写入数据的起始地址的地址
+                uint8 *p----写入的数据指针
+* 输出：无
+* 返回：无
+***********************************************************/
+unsigned char FlashData;
+unsigned int FlashAddr;
+__ramfunc void Flash_Write_Block(unsigned char ExceedAddr0x10000,unsigned int DstAddr, unsigned char  *pSrc)
+{          
+       unsigned char c;
+        
+       FLASH_CR1 =0x01;         //设置为标准编程时间
+       FLASH_CR2 = 0x01;        //使能写操作,block编程 
+       FLASH_NCR2 = 0Xfe;
+       FLASH_PUKR = FLASH_RASS_KEY1;  //写入密码2
+       FLASH_PUKR = FLASH_RASS_KEY2;  //密码1
+       while(FLASH_IAPSR_PUL == 0);   //等待解锁完成
+       
+       FlashAddr = DstAddr;  
+       for(c=0; c<128; c++) 
+       {
+          FlashData = *(pSrc+c);
+          
+          if(ExceedAddr0x10000==1)
+          {
+              asm("LDW X,FlashAddr");
+              asm("LD A,(FlashData)");
+              asm("LDF (0x10000,X),A");
+          }
+          else 
+          {
+              asm("LDW X,FlashAddr");
+              asm("LD A,(FlashData)");
+              asm("LDF (0,X),A");
+          }
+          FlashAddr++;
+       }
+       while(FLASH_IAPSR_EOP==0);     //等待编程结束
+}
+//********************************************************
+//写任意长度,跨页写
+//********************************************************
+void Flash_Write_Bytes(unsigned long int DstAddr, unsigned char  *Src,  unsigned short E2pNum)
+{
+  unsigned char c;
+  unsigned char *pBuf;
+  unsigned char EepBuf[128];
+  unsigned int PageOffset;
+  unsigned long int PageAddr;
+  unsigned char WrNum; 
+  
+  PageOffset = DstAddr&0x0000007f;
+  PageAddr = DstAddr&0xffffff80;
+  
+  do
+  {
+    if((E2pNum> 128)||(PageOffset + E2pNum  > 128))       //大于64字节一定是跨页操作，
+    {                                          //或者虽然小于页但是起始地址的过大导致页溢出也需要跨页操作 
+      WrNum = 128 - PageOffset;//计算当前页写入的字节数
+      E2pNum -= WrNum;           //减去当前的YAO写入的字节数=剩余未写入的字节数
+    }
+    else                                        //非跨页操作
+    {
+      WrNum = E2pNum;
+      E2pNum = 0;
+    }
+    pBuf = EepBuf;
+     
+    for(c=0;c<128;c++)                          //缓存EEPROM页数据
+    {
+       *(pBuf+c) = *(__far unsigned char*)(PageAddr+c);       //(减少循环次数，加快点速度)      
+    }
+    pBuf =  EepBuf + PageOffset;//获取写入字节在缓冲区所在的绝对地址
+    do                          //待写数据填入 到 EEPROM 数据缓存区
+    {
+      *pBuf++ = *Src++;   
+    }while(--WrNum);
+    if(PageAddr<0x10000) Flash_Write_Block(0,PageAddr,EepBuf);//将缓冲区的数据写到EEPROM中
+    else Flash_Write_Block(1,PageAddr,EepBuf);//将缓冲区的数据写到EEPROM中
+    
+    PageOffset = 0; //页偏移地址清零。（起始页偏移地址也只对第一次写有用，如果跨页那么偏移地址必定是0）
+    PageAddr += 128;//页地址需要递增。每一页为64个字节
+  
+  }while(E2pNum);
+}
